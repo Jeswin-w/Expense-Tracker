@@ -1,4 +1,4 @@
-package com.saharaj.moneytracker.smsreader;
+package com.saharaj.moneytracker.sms.reader;
 
 import android.content.BroadcastReceiver;
 import android.content.Context;

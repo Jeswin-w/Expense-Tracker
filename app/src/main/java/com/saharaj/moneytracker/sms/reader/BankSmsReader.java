@@ -1,29 +1,22 @@
-package com.saharaj.moneytracker.smsreader;
+package com.saharaj.moneytracker.sms.reader;
 
 import android.content.Context;
 import android.database.Cursor;
 import android.net.Uri;
 
-import androidx.annotation.NonNull;
-
-import java.io.IOException;
-import java.util.Arrays;
-import java.util.Locale;
+import com.saharaj.moneytracker.sms.parser.SmsParser;
 
 public class BankSmsReader {
 
-    private final String[] senderNames;
-    private final String[] smsFields;
-    //smsFields = new String[]{"address", "body", "date"}
+    private final String[] smsFields = new String[]{"address", "body", "date"};
 
     private final Context context;
+    private final SmsParser smsDataParser;
 
-    BankSmsReader(Context context, String[] senderNames, String[] smsFields) {
-        this.senderNames = Arrays.stream(senderNames)
-                .map(s -> s.toUpperCase(Locale.ROOT))
-                .toArray(String[]::new);
-        this.smsFields = smsFields;
+    BankSmsReader(Context context, SmsParser smsDataParser) {
+
         this.context = context.getApplicationContext();
+        this.smsDataParser = smsDataParser;
     }
 
 
@@ -41,7 +34,13 @@ public class BankSmsReader {
                 String body = cursor.getString(cursor.getColumnIndexOrThrow("body"));
                 String date = cursor.getString(cursor.getColumnIndexOrThrow("date"));
 
-                if (!isBankSender(sender)) continue;
+                if (!smsDataParser.isBankSender(sender) && !smsDataParser.isTransactionMessage(body)) continue;
+
+                smsDataParser.parse(body);
+
+
+
+
 
                 // parse & store
             }
@@ -52,14 +51,6 @@ public class BankSmsReader {
 
     }
 
-    private boolean isBankSender(String sender) {
-        if (sender == null)
-                return false;
 
-        sender = sender.toUpperCase(Locale.ROOT);
-        return Arrays.stream(senderNames).anyMatch(
-                sender::contains
-        );
-    }
 }
 
