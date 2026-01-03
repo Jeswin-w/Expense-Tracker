@@ -1,32 +1,38 @@
 package com.saharaj.moneytracker.sms.parser;
 
 import com.saharaj.moneytracker.sms.model.ParsedTransaction;
+import com.saharaj.moneytracker.sms.parser.exception.TypeParserException;
 
 import java.util.Locale;
+import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class SmsRegexParser extends SmsParser {
 
+    private static final Pattern DEBIT_ACCT_PATTERN =
+            Pattern.compile("(?i).*acct.*debited.*");
+
+    private static final Pattern DEBIT_FOR_BY_PATTERN =
+            Pattern.compile("(?i).*debited\\s+(for|by).*");
+
+    private static final Pattern CREDIT_TO_PATTERN =
+            Pattern.compile("(?i).*credited\\s+to.*");
+
+    private static final Pattern CREDIT_IN_PATTERN =
+            Pattern.compile("(?i).*credited\\s+in.*");
+
+    private final MerchantExtractor merchantExtractor;
+
     private static final Pattern AMOUNT_PATTERN = Pattern.compile(
             "(?i)(?:rs\\.?|inr|₹)\\s?([0-9,]+(?:\\.[0-9]{1,2})?)"
     );
 
-    private static final Pattern MERCHANT_TRANSFER = Pattern.compile(
-            "(?i)\\btransfer\\s+to\\s+([A-Z ]{3,})"
-    );
+    SmsRegexParser(MerchantExtractor merchantExtractor) {
+        this.merchantExtractor = merchantExtractor;
+    }
 
-    private static final Pattern MERCHANT_PRIMARY = Pattern.compile(
-            "(?i)\\b(?:to|at|towards|info:)\\s+([A-Za-z0-9&.\\-_ ]{3,})"
-    );
 
-    private static final Pattern MERCHANT_UPI = Pattern.compile(
-            "(?i)\\bupi[-\\s:]?([a-z0-9._@-]+)"
-    );
-
-    private static final Pattern MERCHANT_POS = Pattern.compile(
-            "(?i)\\bpos\\s+([a-z0-9 &.\\-]{3,})"
-    );
 
     @Override
     public ParsedTransaction parse(String body) {
@@ -35,16 +41,9 @@ public class SmsRegexParser extends SmsParser {
         String text = body.toLowerCase(Locale.ROOT);
 
         // 1️⃣ Detect transaction type
-        ParsedTransaction.TransactionType type;
-        if (text.contains("credit") || text.contains("credited") || text.contains("received")) {
-            type = ParsedTransaction.TransactionType.CREDITED;
-        } else if (text.contains("debit") || text.contains("debited")
-                || text.contains("spent") || text.contains("withdrawn")
-                || text.contains("paid")) {
-            type = ParsedTransaction.TransactionType.DEBITED;
-        } else {
-            return null; // Not a transaction SMS
-        }
+        ParsedTransaction.TransactionType type = detectTransactionType(text)
+                .orElseThrow(() -> new TypeParserException("Unable to detect transaction type from SMS: " + text));
+
 
         // 2️⃣ Extract amount
         Matcher amountMatcher = AMOUNT_PATTERN.matcher(body);
@@ -54,7 +53,7 @@ public class SmsRegexParser extends SmsParser {
         long amountPaise = Math.round(Double.parseDouble(amountStr) * 100);
 
         // 3️⃣ Extract merchant
-        String merchant = extractMerchant(body);
+        String merchant = merchantExtractor.extractMerchant(body);
 
         // 4️⃣ Build parsed object
         return new ParsedTransaction(
@@ -67,30 +66,30 @@ public class SmsRegexParser extends SmsParser {
         );
     }
 
-    // ---------------- Merchant extraction ----------------
+    private Optional<ParsedTransaction.TransactionType> detectTransactionType (String body) {
+            if (body == null) return Optional.empty();
 
-    private String extractMerchant(String body) {
-        Matcher m;
+            String text = body.toLowerCase(Locale.ROOT);
 
-        m = MERCHANT_PRIMARY.matcher(body);
-        if (m.find()) return normalizeMerchant(m.group(1));
+            // 1️⃣ Debit tied to your account (highest priority)
+            if (DEBIT_ACCT_PATTERN.matcher(text).find()
+                    || DEBIT_FOR_BY_PATTERN.matcher(text).find()
+                    || text.contains("spent")
+                    || text.contains("withdrawn")) {
+                return Optional.of(ParsedTransaction.TransactionType.DEBITED);
+            }
 
-        m = MERCHANT_UPI.matcher(body);
-        if (m.find()) return normalizeMerchant(m.group(1).split("@")[0]);
+            // 2️⃣ Credit tied to your account
+            if (CREDIT_TO_PATTERN.matcher(text).find()
+                    || CREDIT_IN_PATTERN.matcher(text).find()) {
+                return Optional.of(ParsedTransaction.TransactionType.CREDITED);
+            }
 
-        m = MERCHANT_POS.matcher(body);
-        if (m.find()) return normalizeMerchant(m.group(1));
-
-        return "UNKNOWN";
+            return Optional.empty();
     }
 
-    private String normalizeMerchant(String merchant) {
-        return merchant
-                .replaceAll("(?i)\\b(ltd|pvt|limited|private)\\b", "")
-                .replaceAll("[^A-Za-z0-9 ]", "")
-                .trim()
-                .toUpperCase(Locale.ROOT);
-    }
+
+
 
     // ---------------- Bank detection (simple heuristic) ----------------
 
